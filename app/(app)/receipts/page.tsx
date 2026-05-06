@@ -1,46 +1,42 @@
 import Link from "next/link";
 import { Plus, Search, ChevronRight } from "lucide-react";
 import { CATEGORIES, formatAmount, type Category } from "@/lib/categories";
+import { createClient } from "@/lib/supabase/server";
 
-type Receipt = {
+type ReceiptRow = {
   id: string;
   date: string;
-  store: string;
-  amount: number;
-  categories: Category[];
+  store_name: string | null;
+  total_amount: number;
+  receipt_items: { category: string }[];
 };
 
-const RECEIPTS_BY_MONTH: { label: string; total: number; items: Receipt[] }[] = [
-  {
-    label: "2026年5月",
-    total: 15860,
-    items: [
-      { id: "1", date: "05/05", store: "イオン", amount: 4230, categories: ["FOOD"] },
-      { id: "2", date: "05/04", store: "ファミリーマート", amount: 890, categories: ["FOOD"] },
-      { id: "3", date: "05/03", store: "マツモトキヨシ", amount: 2140, categories: ["DAILY"] },
-      { id: "4", date: "05/02", store: "東京ガス", amount: 5400, categories: ["UTILITY"] },
-      { id: "5", date: "05/01", store: "ドン・キホーテ", amount: 3200, categories: ["OTHER", "DAILY"] },
-    ],
-  },
-  {
-    label: "2026年4月",
-    total: 38070,
-    items: [
-      { id: "6", date: "04/28", store: "業務スーパー", amount: 5670, categories: ["FOOD"] },
-      { id: "7", date: "04/25", store: "LOFT", amount: 2800, categories: ["DAILY"] },
-      { id: "8", date: "04/22", store: "コストコ", amount: 12500, categories: ["FOOD"] },
-      { id: "9", date: "04/15", store: "東京電力", amount: 7100, categories: ["UTILITY"] },
-      { id: "10", date: "04/10", store: "吉野家", amount: 1560, categories: ["FOOD"] },
-      { id: "11", date: "04/03", store: "サンドラッグ", amount: 3240, categories: ["DAILY"] },
-      { id: "12", date: "04/01", store: "アパート家賃", amount: 100000, categories: ["RENT"] },
-    ],
-  },
-];
+function groupByMonth(receipts: ReceiptRow[]) {
+  const map = new Map<string, { label: string; total: number; items: ReceiptRow[] }>();
+  for (const r of receipts) {
+    const [year, month] = r.date.split("-");
+    const key = `${year}-${month}`;
+    const label = `${year}年${parseInt(month)}月`;
+    if (!map.has(key)) map.set(key, { label, total: 0, items: [] });
+    const group = map.get(key)!;
+    group.total += r.total_amount;
+    group.items.push(r);
+  }
+  return Array.from(map.values());
+}
 
-export default function ReceiptsPage() {
+export default async function ReceiptsPage() {
+  const supabase = await createClient();
+
+  const { data: receipts } = await supabase
+    .from("receipts")
+    .select("id, date, store_name, total_amount, receipt_items(category)")
+    .order("date", { ascending: false });
+
+  const groups = groupByMonth((receipts ?? []) as ReceiptRow[]);
+
   return (
     <div>
-      {/* Header */}
       <header className="bg-white px-5 pt-5 pb-4 border-b border-slate-100">
         <div className="flex items-center justify-between mb-4">
           <h1 className="text-xl font-bold text-slate-900">支出一覧</h1>
@@ -52,7 +48,6 @@ export default function ReceiptsPage() {
           </Link>
         </div>
 
-        {/* Search bar */}
         <div className="flex items-center gap-2 rounded-xl bg-slate-100 px-3 py-2.5">
           <Search className="h-4 w-4 text-slate-400 shrink-0" />
           <input
@@ -64,7 +59,12 @@ export default function ReceiptsPage() {
       </header>
 
       <div className="px-4 py-5 space-y-6">
-        {RECEIPTS_BY_MONTH.map((month) => (
+        {groups.length === 0 && (
+          <p className="text-center text-sm text-slate-400 py-12">
+            まだ支出が登録されていません
+          </p>
+        )}
+        {groups.map((month) => (
           <section key={month.label}>
             <div className="mb-2 flex items-center justify-between">
               <h2 className="text-sm font-semibold text-slate-600">{month.label}</h2>
@@ -74,39 +74,45 @@ export default function ReceiptsPage() {
             </div>
 
             <div className="overflow-hidden rounded-xl bg-white shadow-sm divide-y divide-slate-100">
-              {month.items.map((receipt) => (
-                <Link
-                  key={receipt.id}
-                  href={`/receipts/${receipt.id}`}
-                  className="flex items-center gap-3 px-4 py-3.5 active:bg-slate-50 transition-colors"
-                >
-                  <span className="text-xs text-slate-400 tabular-nums w-10 shrink-0">
-                    {receipt.date}
-                  </span>
-                  <div className="flex-1 min-w-0">
-                    <p className="truncate text-sm font-medium text-slate-800">
-                      {receipt.store}
-                    </p>
-                    <div className="mt-0.5 flex flex-wrap gap-1">
-                      {receipt.categories.map((c) => {
-                        const cat = CATEGORIES[c];
-                        return (
-                          <span
-                            key={c}
-                            className={`rounded-full px-2 py-px text-[10px] font-medium ${cat.badgeClass}`}
-                          >
-                            {cat.label}
-                          </span>
-                        );
-                      })}
+              {month.items.map((receipt) => {
+                const mmdd = receipt.date.slice(5).replace("-", "/");
+                const categories = [
+                  ...new Set(receipt.receipt_items.map((i) => i.category as Category)),
+                ];
+                return (
+                  <Link
+                    key={receipt.id}
+                    href={`/receipts/${receipt.id}`}
+                    className="flex items-center gap-3 px-4 py-3.5 active:bg-slate-50 transition-colors"
+                  >
+                    <span className="text-xs text-slate-400 tabular-nums w-10 shrink-0">
+                      {mmdd}
+                    </span>
+                    <div className="flex-1 min-w-0">
+                      <p className="truncate text-sm font-medium text-slate-800">
+                        {receipt.store_name ?? "（店舗名なし）"}
+                      </p>
+                      <div className="mt-0.5 flex flex-wrap gap-1">
+                        {categories.map((c) => {
+                          const cat = CATEGORIES[c];
+                          return (
+                            <span
+                              key={c}
+                              className={`rounded-full px-2 py-px text-[10px] font-medium ${cat.badgeClass}`}
+                            >
+                              {cat.label}
+                            </span>
+                          );
+                        })}
+                      </div>
                     </div>
-                  </div>
-                  <span className="text-sm font-semibold text-slate-900 tabular-nums shrink-0">
-                    {formatAmount(receipt.amount)}
-                  </span>
-                  <ChevronRight className="h-4 w-4 text-slate-300 shrink-0" />
-                </Link>
-              ))}
+                    <span className="text-sm font-semibold text-slate-900 tabular-nums shrink-0">
+                      {formatAmount(receipt.total_amount)}
+                    </span>
+                    <ChevronRight className="h-4 w-4 text-slate-300 shrink-0" />
+                  </Link>
+                );
+              })}
             </div>
           </section>
         ))}

@@ -1,9 +1,10 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useTransition } from "react";
 import Link from "next/link";
 import { ArrowLeft, Camera, FileText, Upload, Plus, Trash2 } from "lucide-react";
 import { CATEGORIES, type Category } from "@/lib/categories";
+import { saveReceipt } from "../actions";
 
 type Tab = "photo" | "manual";
 
@@ -16,9 +17,16 @@ type Item = { name: string; amount: string; category: Category };
 
 const DEFAULT_ITEM: Item = { name: "", amount: "", category: "FOOD" };
 
+const today = new Date().toISOString().slice(0, 10);
+
 export default function NewReceiptPage() {
   const [tab, setTab] = useState<Tab>("photo");
+  const [date, setDate] = useState(today);
+  const [storeName, setStoreName] = useState("");
+  const [memo, setMemo] = useState("");
   const [items, setItems] = useState<Item[]>([{ ...DEFAULT_ITEM }]);
+  const [error, setError] = useState<string | null>(null);
+  const [isPending, startTransition] = useTransition();
 
   const addItem = () => setItems((prev) => [...prev, { ...DEFAULT_ITEM }]);
   const removeItem = (i: number) =>
@@ -28,9 +36,19 @@ export default function NewReceiptPage() {
       prev.map((item, idx) => (idx === i ? { ...item, [field]: value } : item))
     );
 
+  const handleSubmit = () => {
+    setError(null);
+    startTransition(async () => {
+      try {
+        await saveReceipt({ date, storeName, memo, items });
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "保存に失敗しました");
+      }
+    });
+  };
+
   return (
     <div>
-      {/* Header */}
       <header className="flex items-center gap-3 bg-white px-4 py-4 border-b border-slate-100">
         <Link
           href="/receipts"
@@ -41,7 +59,6 @@ export default function NewReceiptPage() {
         <h1 className="text-lg font-semibold text-slate-900">支出を追加</h1>
       </header>
 
-      {/* Tabs */}
       <div className="bg-white border-b border-slate-100 px-4">
         <div className="flex">
           {(["photo", "manual"] as Tab[]).map((t) => (
@@ -75,10 +92,19 @@ export default function NewReceiptPage() {
           <PhotoTab />
         ) : (
           <ManualTab
+            date={date}
+            storeName={storeName}
+            memo={memo}
             items={items}
+            onDateChange={setDate}
+            onStoreNameChange={setStoreName}
+            onMemoChange={setMemo}
             onAddItem={addItem}
             onRemoveItem={removeItem}
             onUpdateItem={updateItem}
+            onSubmit={handleSubmit}
+            isPending={isPending}
+            error={error}
           />
         )}
       </div>
@@ -89,7 +115,6 @@ export default function NewReceiptPage() {
 function PhotoTab() {
   return (
     <div className="space-y-5">
-      {/* Upload area */}
       <button className="flex w-full flex-col items-center justify-center gap-3 rounded-2xl border-2 border-dashed border-slate-300 bg-white py-14 active:bg-slate-50 transition-colors">
         <div className="flex h-14 w-14 items-center justify-center rounded-full bg-green-50">
           <Camera className="h-7 w-7 text-green-600" />
@@ -122,19 +147,36 @@ function PhotoTab() {
 }
 
 function ManualTab({
+  date,
+  storeName,
+  memo,
   items,
+  onDateChange,
+  onStoreNameChange,
+  onMemoChange,
   onAddItem,
   onRemoveItem,
   onUpdateItem,
+  onSubmit,
+  isPending,
+  error,
 }: {
+  date: string;
+  storeName: string;
+  memo: string;
   items: Item[];
+  onDateChange: (v: string) => void;
+  onStoreNameChange: (v: string) => void;
+  onMemoChange: (v: string) => void;
   onAddItem: () => void;
   onRemoveItem: (i: number) => void;
   onUpdateItem: (i: number, field: keyof Item, value: string) => void;
+  onSubmit: () => void;
+  isPending: boolean;
+  error: string | null;
 }) {
   return (
     <div className="space-y-5">
-      {/* Basic info */}
       <div className="space-y-3 rounded-xl bg-white p-4 shadow-sm">
         <h2 className="text-sm font-semibold text-slate-700">基本情報</h2>
         <div className="space-y-3">
@@ -142,7 +184,8 @@ function ManualTab({
             <span className="text-xs font-medium text-slate-500">日付</span>
             <input
               type="date"
-              defaultValue="2026-05-06"
+              value={date}
+              onChange={(e) => onDateChange(e.target.value)}
               className="mt-1 block w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm text-slate-800 outline-none focus:border-green-500 focus:ring-2 focus:ring-green-100"
             />
           </label>
@@ -150,6 +193,8 @@ function ManualTab({
             <span className="text-xs font-medium text-slate-500">店舗名</span>
             <input
               type="text"
+              value={storeName}
+              onChange={(e) => onStoreNameChange(e.target.value)}
               placeholder="例：イオン、ファミリーマート"
               className="mt-1 block w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm text-slate-800 placeholder:text-slate-400 outline-none focus:border-green-500 focus:ring-2 focus:ring-green-100"
             />
@@ -158,6 +203,8 @@ function ManualTab({
             <span className="text-xs font-medium text-slate-500">メモ（任意）</span>
             <input
               type="text"
+              value={memo}
+              onChange={(e) => onMemoChange(e.target.value)}
               placeholder="自由記入"
               className="mt-1 block w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm text-slate-800 placeholder:text-slate-400 outline-none focus:border-green-500 focus:ring-2 focus:ring-green-100"
             />
@@ -165,7 +212,6 @@ function ManualTab({
         </div>
       </div>
 
-      {/* Items */}
       <div className="space-y-3 rounded-xl bg-white p-4 shadow-sm">
         <div className="flex items-center justify-between">
           <h2 className="text-sm font-semibold text-slate-700">明細</h2>
@@ -231,9 +277,16 @@ function ManualTab({
         </button>
       </div>
 
-      {/* Submit */}
-      <button className="w-full rounded-xl bg-green-600 py-3.5 text-sm font-semibold text-white shadow-sm active:bg-green-700 transition-colors">
-        保存する
+      {error && (
+        <p className="rounded-xl bg-red-50 px-4 py-3 text-sm text-red-600">{error}</p>
+      )}
+
+      <button
+        onClick={onSubmit}
+        disabled={isPending}
+        className="w-full rounded-xl bg-green-600 py-3.5 text-sm font-semibold text-white shadow-sm active:bg-green-700 transition-colors disabled:opacity-60"
+      >
+        {isPending ? "保存中..." : "保存する"}
       </button>
     </div>
   );
