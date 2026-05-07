@@ -283,6 +283,29 @@ export default function ReceiptDetailClient({
                 <Plus className="h-4 w-4" />
                 明細を追加
               </button>
+
+              {(() => {
+                const itemsSum = items.reduce((s, it) => s + (parseInt(it.amount) || 0), 0);
+                const total = parseInt(totalAmount) || 0;
+                const diff = total - itemsSum;
+                if (!total || diff === 0) return null;
+                return (
+                  <div className={`rounded-lg px-3 py-2.5 text-xs ${Math.abs(diff) > 0 ? "bg-amber-50 text-amber-700" : "bg-green-50 text-green-700"}`}>
+                    <span className="font-medium">明細合計 ¥{itemsSum.toLocaleString()}</span>
+                    <span className="mx-1">／</span>
+                    <span>合計金額 ¥{total.toLocaleString()}</span>
+                    <span className="ml-2 font-semibold">
+                      {diff > 0 ? `¥${diff.toLocaleString()} 未割当` : `¥${Math.abs(diff).toLocaleString()} 超過`}
+                    </span>
+                    {diff > 0 && (
+                      <p className="mt-1 text-amber-600">差分は保存時に消費税として自動登録されます</p>
+                    )}
+                    {diff < 0 && (
+                      <p className="mt-1 text-amber-600">明細の金額を修正して合計金額に合わせてください</p>
+                    )}
+                  </div>
+                );
+              })()}
             </div>
 
             {error && (

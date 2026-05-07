@@ -1,4 +1,4 @@
-export type Category = "FOOD" | "DAILY" | "UTILITY" | "RENT" | "SAVING" | "OTHER";
+export type Category = "FOOD" | "DAILY" | "UTILITY" | "RENT" | "SAVING" | "OTHER" | "TAX";
 
 export const CATEGORIES: Record<
   Category,
@@ -51,6 +51,13 @@ export const CATEGORIES: Record<
     barColor: "bg-slate-400",
     badgeClass: "bg-slate-100 text-slate-600",
     iconBg: "bg-slate-100 text-slate-500",
+  },
+  TAX: {
+    label: "消費税",
+    budget: null,
+    barColor: "bg-rose-400",
+    badgeClass: "bg-rose-50 text-rose-600",
+    iconBg: "bg-rose-100 text-rose-500",
   },
 };
 

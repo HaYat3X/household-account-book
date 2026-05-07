@@ -51,7 +51,7 @@ export async function parseReceiptImage(formData: FormData): Promise<{
 
   const client = new Anthropic();
   const message = await client.messages.create({
-    model: "claude-haiku-4-5-20251001",
+    model: "claude-sonnet-4-6",
     max_tokens: 1024,
     messages: [
       {
@@ -60,7 +60,8 @@ export async function parseReceiptImage(formData: FormData): Promise<{
 
 【ルール】
 - 商品名はテキストから読み取った名称を自然な日本語に整えること
-- 各商品の金額は税込単価または小計（数字のみ）を使用すること
+- 各商品の金額は**行合計（単価×個数）の税込金額**を使用すること。単価のみが記載されている場合は個数を掛けて行合計を算出すること
+- シール割引・値引き・割引は対象商品の金額から**直接差し引いた後の金額**を使用すること。割引行自体は items に含めないこと
 - 「小計」「消費税」「合計」「お釣り」などの集計行は items に含めないこと
 - totalAmount にはレシートの「合計」「税込合計」「お支払い金額」の値を入れること。見つからない場合は items の金額合計を返すこと
 - 日付はYYYY-MM-DD形式で返すこと
@@ -74,7 +75,7 @@ ${categoryList}
   "date": "YYYY-MM-DD（不明なら今日の日付）",
   "totalAmount": "合計金額（数字のみ）",
   "items": [
-    { "name": "商品名", "amount": "税込金額（数字のみ）", "category": "カテゴリID" }
+    { "name": "商品名", "amount": "行合計金額（負の値も可）", "category": "カテゴリID" }
   ]
 }
 
@@ -102,6 +103,11 @@ ${ocrText}`,
 
   const itemsTotal = parsedItems.reduce((sum, it) => sum + (parseInt(it.amount) || 0), 0);
   const totalAmount = String(parsed.totalAmount ? parseInt(String(parsed.totalAmount)) || itemsTotal : itemsTotal);
+
+  const taxDiff = parseInt(totalAmount) - itemsTotal;
+  if (taxDiff > 0) {
+    parsedItems.push({ name: "消費税", amount: String(taxDiff), category: "TAX" });
+  }
 
   return {
     storeName: parsed.storeName ?? "",
@@ -139,6 +145,12 @@ export async function saveReceipt(data: {
   if (error) throw new Error(error.message);
 
   const validItems = data.items.filter((item) => item.name || item.amount);
+  const itemsSum = validItems.reduce((s, it) => s + (parseInt(it.amount) || 0), 0);
+  const taxDiff = totalAmount - itemsSum;
+  if (taxDiff > 0) {
+    validItems.push({ name: "消費税", amount: String(taxDiff), category: "TAX" });
+  }
+
   if (validItems.length > 0) {
     const { error: itemsError } = await supabase.from("receipt_items").insert(
       validItems.map((item) => ({
@@ -196,6 +208,12 @@ export async function updateReceipt(
   if (deleteError) throw new Error(deleteError.message);
 
   const validItems = data.items.filter((item) => item.name || item.amount);
+  const itemsSum = validItems.reduce((s, it) => s + (parseInt(it.amount) || 0), 0);
+  const taxDiff = totalAmount - itemsSum;
+  if (taxDiff > 0) {
+    validItems.push({ name: "消費税", amount: String(taxDiff), category: "TAX" });
+  }
+
   if (validItems.length > 0) {
     const { error: itemsError } = await supabase.from("receipt_items").insert(
       validItems.map((item) => ({
