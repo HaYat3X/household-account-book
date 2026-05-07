@@ -1,7 +1,7 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  /* config options here */
+  serverExternalPackages: ["@google-cloud/vision", "@grpc/grpc-js", "@grpc/proto-loader"],
 };
 
 export default nextConfig;

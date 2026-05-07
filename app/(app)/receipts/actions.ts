@@ -1,10 +1,25 @@
 "use server";
 
 import Anthropic from "@anthropic-ai/sdk";
+import vision from "@google-cloud/vision";
 import { createClient } from "@/lib/supabase/server";
 import { CATEGORIES } from "@/lib/categories";
 import { redirect } from "next/navigation";
 type Item = { name: string; amount: string; category: string };
+
+function createVisionClient() {
+  const encoded = process.env.GOOGLE_CLOUD_VISION_CREDENTIALS;
+  if (!encoded) throw new Error("GOOGLE_CLOUD_VISION_CREDENTIALS が設定されていません");
+  const credentials = JSON.parse(Buffer.from(encoded, "base64").toString("utf-8"));
+  return new vision.ImageAnnotatorClient({ credentials });
+}
+
+async function extractTextFromImage(buffer: Buffer): Promise<string> {
+  const client = createVisionClient();
+  const base64 = buffer.toString("base64");
+  const [result] = await client.documentTextDetection({ image: { content: base64 } });
+  return result.fullTextAnnotation?.text ?? "";
+}
 
 export async function parseReceiptImage(formData: FormData): Promise<{
   storeName: string;
@@ -27,13 +42,10 @@ export async function parseReceiptImage(formData: FormData): Promise<{
   const validCategoryIds = new Set(allCategories.map(({ id }) => id));
   const categoryList = allCategories.map(({ id, label }) => `- ${id}: ${label}`).join("\n");
 
-  const buffer = await file.arrayBuffer();
-  const base64 = Buffer.from(buffer).toString("base64");
-  const mediaType = (file.type || "image/jpeg") as
-    | "image/jpeg"
-    | "image/png"
-    | "image/gif"
-    | "image/webp";
+  const buffer = Buffer.from(await file.arrayBuffer());
+  const ocrText = await extractTextFromImage(buffer);
+
+  if (!ocrText.trim()) throw new Error("レシートのテキストを読み取れませんでした");
 
   const client = new Anthropic();
   const message = await client.messages.create({
@@ -42,18 +54,13 @@ export async function parseReceiptImage(formData: FormData): Promise<{
     messages: [
       {
         role: "user",
-        content: [
-          {
-            type: "image",
-            source: { type: "base64", media_type: mediaType, data: base64 },
-          },
-          {
-            type: "text",
-            text: `日本語のレシートを解析してください。以下のルールに従ってください：
-- 商品名はレシートに印字された日本語をそのまま読み取ること（英数字・記号は除去し自然な日本語に整えること）
+        content: `以下はレシートをOCRで読み取ったテキストです。構造化して返してください。
+
+【ルール】
+- 商品名はテキストから読み取った名称を自然な日本語に整えること
 - 金額は各商品の税込単価または小計を使用すること
 - 「小計」「消費税」「合計」「お釣り」などの集計行は items に含めないこと
-- 日付はレシートに記載の通りYYYY-MM-DD形式で返すこと
+- 日付はYYYY-MM-DD形式で返すこと
 
 使用できるカテゴリ（categoryには必ずこの一覧のIDをそのまま返すこと）:
 ${categoryList}
@@ -65,9 +72,10 @@ ${categoryList}
   "items": [
     { "name": "商品名", "amount": "税込金額（数字のみ）", "category": "カテゴリID" }
   ]
-}`,
-          },
-        ],
+}
+
+【OCRテキスト】
+${ocrText}`,
       },
     ],
   });
