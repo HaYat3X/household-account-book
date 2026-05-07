@@ -5,6 +5,7 @@ import vision from "@google-cloud/vision";
 import { createClient } from "@/lib/supabase/server";
 import { CATEGORIES } from "@/lib/categories";
 import { redirect } from "next/navigation";
+import { revalidatePath } from "next/cache";
 type Item = { name: string; amount: string; category: string };
 
 function createVisionClient() {
@@ -157,6 +158,63 @@ export async function saveReceipt(data: {
     if (reimbError) throw new Error(reimbError.message);
   }
 
+  redirect("/receipts");
+}
+
+export async function updateReceipt(
+  id: string,
+  data: {
+    date: string;
+    storeName: string;
+    memo: string;
+    items: Item[];
+    totalAmount?: string;
+  }
+) {
+  const supabase = await createClient();
+
+  const totalAmount = data.totalAmount
+    ? parseInt(data.totalAmount) || 0
+    : data.items.reduce((sum, item) => sum + (parseInt(item.amount) || 0), 0);
+
+  const { error } = await supabase
+    .from("receipts")
+    .update({
+      store_name: data.storeName || null,
+      date: data.date,
+      total_amount: totalAmount,
+      memo: data.memo || null,
+    })
+    .eq("id", id);
+
+  if (error) throw new Error(error.message);
+
+  const { error: deleteError } = await supabase
+    .from("receipt_items")
+    .delete()
+    .eq("receipt_id", id);
+  if (deleteError) throw new Error(deleteError.message);
+
+  const validItems = data.items.filter((item) => item.name || item.amount);
+  if (validItems.length > 0) {
+    const { error: itemsError } = await supabase.from("receipt_items").insert(
+      validItems.map((item) => ({
+        receipt_id: id,
+        name: item.name,
+        amount: parseInt(item.amount) || 0,
+        category: item.category,
+      }))
+    );
+    if (itemsError) throw new Error(itemsError.message);
+  }
+
+  revalidatePath(`/receipts/${id}`);
+}
+
+export async function deleteReceipt(id: string) {
+  const supabase = await createClient();
+  const { error } = await supabase.from("receipts").delete().eq("id", id);
+  if (error) throw new Error(error.message);
   redirect("/receipts");
 }
 
