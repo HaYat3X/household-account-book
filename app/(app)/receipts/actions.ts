@@ -1,8 +1,97 @@
 "use server";
 
+import Anthropic from "@anthropic-ai/sdk";
 import { createClient } from "@/lib/supabase/server";
+import { CATEGORIES } from "@/lib/categories";
 import { redirect } from "next/navigation";
 type Item = { name: string; amount: string; category: string };
+
+export async function parseReceiptImage(formData: FormData): Promise<{
+  storeName: string;
+  date: string;
+  items: Item[];
+}> {
+  const file = formData.get("image") as File;
+  if (!file || file.size === 0) throw new Error("画像が選択されていません");
+
+  const supabase = await createClient();
+  const { data: customCategories } = await supabase
+    .from("custom_categories")
+    .select("id, name")
+    .order("created_at");
+
+  const allCategories = [
+    ...Object.entries(CATEGORIES).map(([key, { label }]) => ({ id: key, label })),
+    ...(customCategories ?? []).map(({ id, name }: { id: string; name: string }) => ({ id, label: name })),
+  ];
+  const validCategoryIds = new Set(allCategories.map(({ id }) => id));
+  const categoryList = allCategories.map(({ id, label }) => `- ${id}: ${label}`).join("\n");
+
+  const buffer = await file.arrayBuffer();
+  const base64 = Buffer.from(buffer).toString("base64");
+  const mediaType = (file.type || "image/jpeg") as
+    | "image/jpeg"
+    | "image/png"
+    | "image/gif"
+    | "image/webp";
+
+  const client = new Anthropic();
+  const message = await client.messages.create({
+    model: "claude-haiku-4-5-20251001",
+    max_tokens: 1024,
+    messages: [
+      {
+        role: "user",
+        content: [
+          {
+            type: "image",
+            source: { type: "base64", media_type: mediaType, data: base64 },
+          },
+          {
+            type: "text",
+            text: `日本語のレシートを解析してください。以下のルールに従ってください：
+- 商品名はレシートに印字された日本語をそのまま読み取ること（英数字・記号は除去し自然な日本語に整えること）
+- 金額は各商品の税込単価または小計を使用すること
+- 「小計」「消費税」「合計」「お釣り」などの集計行は items に含めないこと
+- 日付はレシートに記載の通りYYYY-MM-DD形式で返すこと
+
+使用できるカテゴリ（categoryには必ずこの一覧のIDをそのまま返すこと）:
+${categoryList}
+
+以下のJSON形式のみ返してください。余計な文章は不要です：
+{
+  "storeName": "店舗名（不明なら空文字）",
+  "date": "YYYY-MM-DD（不明なら今日の日付）",
+  "items": [
+    { "name": "商品名", "amount": "税込金額（数字のみ）", "category": "カテゴリID" }
+  ]
+}`,
+          },
+        ],
+      },
+    ],
+  });
+
+  const text =
+    message.content[0].type === "text" ? message.content[0].text : "";
+  const cleaned = text
+    .replace(/```json\s*/g, "")
+    .replace(/```\s*/g, "")
+    .trim();
+  const parsed = JSON.parse(cleaned);
+
+  return {
+    storeName: parsed.storeName ?? "",
+    date: parsed.date ?? new Date().toISOString().slice(0, 10),
+    items: Array.isArray(parsed.items) && parsed.items.length > 0
+      ? parsed.items.map((it: Item) => ({
+          name: String(it.name ?? ""),
+          amount: String(it.amount ?? ""),
+          category: validCategoryIds.has(it.category) ? it.category : "OTHER",
+        }))
+      : [{ name: "", amount: "", category: "FOOD" }],
+  };
+}
 
 export async function saveReceipt(data: {
   date: string;

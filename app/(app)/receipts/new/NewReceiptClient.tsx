@@ -1,10 +1,10 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useRef, useState, useTransition } from "react";
 import Link from "next/link";
 import { ArrowLeft, Camera, FileText, Upload, Plus, Trash2 } from "lucide-react";
 import { CATEGORIES } from "@/lib/categories";
-import { saveReceipt } from "../actions";
+import { parseReceiptImage, saveReceipt } from "../actions";
 
 type Tab = "photo" | "manual";
 type Item = { name: string; amount: string; category: string };
@@ -88,7 +88,14 @@ export default function NewReceiptClient({ customCategories }: Props) {
 
       <div className="px-4 py-5">
         {tab === "photo" ? (
-          <PhotoTab />
+          <PhotoTab
+            onOcrComplete={(result) => {
+              setDate(result.date);
+              setStoreName(result.storeName);
+              setItems(result.items);
+              setTab("manual");
+            }}
+          />
         ) : (
           <ManualTab
             date={date}
@@ -114,10 +121,69 @@ export default function NewReceiptClient({ customCategories }: Props) {
   );
 }
 
-function PhotoTab() {
+function PhotoTab({
+  onOcrComplete,
+}: {
+  onOcrComplete: (result: { storeName: string; date: string; items: Item[] }) => void;
+}) {
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const cameraRef = useRef<HTMLInputElement>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
+
+  const handleFile = async (file: File) => {
+    setError(null);
+    setIsLoading(true);
+    try {
+      const formData = new FormData();
+      formData.append("image", file);
+      const result = await parseReceiptImage(formData);
+      onOcrComplete(result);
+    } catch {
+      setError("読み取りに失敗しました。手動で入力してください。");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  if (isLoading) {
+    return (
+      <div className="flex flex-col items-center justify-center gap-4 py-20">
+        <div className="h-10 w-10 animate-spin rounded-full border-4 border-green-200 border-t-green-600" />
+        <p className="text-sm font-medium text-slate-600">AIが解析中...</p>
+        <p className="text-xs text-slate-400">少々お待ちください</p>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-5">
-      <button className="flex w-full flex-col items-center justify-center gap-3 rounded-2xl border-2 border-dashed border-slate-300 bg-white py-14 active:bg-slate-50 transition-colors">
+      <input
+        ref={cameraRef}
+        type="file"
+        accept="image/*"
+        capture="environment"
+        className="hidden"
+        onChange={(e) => {
+          const file = e.target.files?.[0];
+          if (file) handleFile(file);
+        }}
+      />
+      <input
+        ref={fileRef}
+        type="file"
+        accept="image/*"
+        className="hidden"
+        onChange={(e) => {
+          const file = e.target.files?.[0];
+          if (file) handleFile(file);
+        }}
+      />
+
+      <button
+        onClick={() => cameraRef.current?.click()}
+        className="flex w-full flex-col items-center justify-center gap-3 rounded-2xl border-2 border-dashed border-slate-300 bg-white py-14 active:bg-slate-50 transition-colors"
+      >
         <div className="flex h-14 w-14 items-center justify-center rounded-full bg-green-50">
           <Camera className="h-7 w-7 text-green-600" />
         </div>
@@ -133,10 +199,17 @@ function PhotoTab() {
         <div className="h-px flex-1 bg-slate-200" />
       </div>
 
-      <button className="flex w-full items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white py-3 text-sm font-medium text-slate-600 active:bg-slate-50 transition-colors">
+      <button
+        onClick={() => fileRef.current?.click()}
+        className="flex w-full items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white py-3 text-sm font-medium text-slate-600 active:bg-slate-50 transition-colors"
+      >
         <Upload className="h-4 w-4" />
         ファイルを選択
       </button>
+
+      {error && (
+        <p className="rounded-xl bg-red-50 px-4 py-3 text-sm text-red-600">{error}</p>
+      )}
 
       <div className="rounded-xl bg-green-50 p-4">
         <p className="text-xs font-medium text-green-800">AI解析について</p>
