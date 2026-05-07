@@ -38,13 +38,25 @@ create table custom_categories (
   created_at timestamptz not null default now()
 );
 
+-- 立替管理
+create table reimbursements (
+  id uuid primary key default uuid_generate_v4(),
+  receipt_id uuid not null references receipts(id) on delete cascade,
+  amount integer not null,
+  is_paid boolean not null default false,
+  paid_at timestamptz,
+  created_at timestamptz not null default now()
+);
+
 alter table receipts enable row level security;
 alter table receipt_items enable row level security;
 alter table budget_overrides enable row level security;
 alter table custom_categories enable row level security;
+alter table reimbursements enable row level security;
 
 -- 認証実装前の暫定ポリシー（全操作を許可）
 create policy "allow_all_receipts" on receipts for all using (true) with check (true);
 create policy "allow_all_receipt_items" on receipt_items for all using (true) with check (true);
 create policy "allow_all_budget_overrides" on budget_overrides for all using (true) with check (true);
 create policy "allow_all_custom_categories" on custom_categories for all using (true) with check (true);
+create policy "allow_all_reimbursements" on reimbursements for all using (true) with check (true);

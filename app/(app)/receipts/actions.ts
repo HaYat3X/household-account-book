@@ -9,6 +9,7 @@ export async function saveReceipt(data: {
   storeName: string;
   memo: string;
   items: Item[];
+  isReimbursement: boolean;
 }) {
   const supabase = await createClient();
 
@@ -43,5 +44,21 @@ export async function saveReceipt(data: {
     if (itemsError) throw new Error(itemsError.message);
   }
 
+  if (data.isReimbursement) {
+    const { error: reimbError } = await supabase
+      .from("reimbursements")
+      .insert({ receipt_id: receipt.id, amount: totalAmount });
+    if (reimbError) throw new Error(reimbError.message);
+  }
+
   redirect("/receipts");
+}
+
+export async function markReimbursementPaid(id: string) {
+  const supabase = await createClient();
+  const { error } = await supabase
+    .from("reimbursements")
+    .update({ is_paid: true, paid_at: new Date().toISOString() })
+    .eq("id", id);
+  if (error) throw new Error(error.message);
 }

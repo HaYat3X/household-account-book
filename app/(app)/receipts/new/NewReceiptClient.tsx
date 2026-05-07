@@ -24,6 +24,7 @@ export default function NewReceiptClient({ customCategories }: Props) {
   const [storeName, setStoreName] = useState("");
   const [memo, setMemo] = useState("");
   const [items, setItems] = useState<Item[]>([{ ...DEFAULT_ITEM }]);
+  const [isReimbursement, setIsReimbursement] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
 
@@ -44,7 +45,7 @@ export default function NewReceiptClient({ customCategories }: Props) {
     setError(null);
     startTransition(async () => {
       try {
-        await saveReceipt({ date, storeName, memo, items });
+        await saveReceipt({ date, storeName, memo, items, isReimbursement });
       } catch (e) {
         setError(e instanceof Error ? e.message : "保存に失敗しました");
       }
@@ -94,6 +95,7 @@ export default function NewReceiptClient({ customCategories }: Props) {
             storeName={storeName}
             memo={memo}
             items={items}
+            isReimbursement={isReimbursement}
             categoryOptions={categoryOptions}
             onDateChange={setDate}
             onStoreNameChange={setStoreName}
@@ -101,6 +103,7 @@ export default function NewReceiptClient({ customCategories }: Props) {
             onAddItem={addItem}
             onRemoveItem={removeItem}
             onUpdateItem={updateItem}
+            onIsReimbursementChange={setIsReimbursement}
             onSubmit={handleSubmit}
             isPending={isPending}
             error={error}
@@ -150,6 +153,7 @@ function ManualTab({
   storeName,
   memo,
   items,
+  isReimbursement,
   categoryOptions,
   onDateChange,
   onStoreNameChange,
@@ -157,6 +161,7 @@ function ManualTab({
   onAddItem,
   onRemoveItem,
   onUpdateItem,
+  onIsReimbursementChange,
   onSubmit,
   isPending,
   error,
@@ -165,6 +170,7 @@ function ManualTab({
   storeName: string;
   memo: string;
   items: Item[];
+  isReimbursement: boolean;
   categoryOptions: { value: string; label: string }[];
   onDateChange: (v: string) => void;
   onStoreNameChange: (v: string) => void;
@@ -172,6 +178,7 @@ function ManualTab({
   onAddItem: () => void;
   onRemoveItem: (i: number) => void;
   onUpdateItem: (i: number, field: keyof Item, value: string) => void;
+  onIsReimbursementChange: (v: boolean) => void;
   onSubmit: () => void;
   isPending: boolean;
   error: string | null;
@@ -210,6 +217,25 @@ function ManualTab({
               className="mt-1 block w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm text-slate-800 placeholder:text-slate-400 outline-none focus:border-green-500 focus:ring-2 focus:ring-green-100"
             />
           </label>
+          <div className="flex items-center justify-between rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5">
+            <div>
+              <span className="text-sm font-medium text-slate-700">立替</span>
+              <p className="text-xs text-slate-400">パートナーへの請求が必要な場合にON</p>
+            </div>
+            <button
+              type="button"
+              onClick={() => onIsReimbursementChange(!isReimbursement)}
+              className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+                isReimbursement ? "bg-green-600" : "bg-slate-200"
+              }`}
+            >
+              <span
+                className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${
+                  isReimbursement ? "translate-x-6" : "translate-x-1"
+                }`}
+              />
+            </button>
+          </div>
         </div>
       </div>
 
