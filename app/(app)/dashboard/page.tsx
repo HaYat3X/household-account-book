@@ -1,40 +1,99 @@
 import Link from "next/link";
 import { Bell, ChevronLeft, ChevronRight, ChevronRight as ArrowRight } from "lucide-react";
 import { CATEGORIES, formatAmount, type Category } from "@/lib/categories";
-
-const MONTH_TOTALS: { category: Category; spent: number }[] = [
-  { category: "RENT", spent: 100000 },
-  { category: "FOOD", spent: 38400 },
-  { category: "UTILITY", spent: 12500 },
-  { category: "DAILY", spent: 8200 },
-  { category: "SAVING", spent: 40000 },
-  { category: "OTHER", spent: 3200 },
-];
-
-const RECENT_RECEIPTS = [
-  { id: "1", date: "05/05", store: "イオン", amount: 4230, category: "FOOD" as Category },
-  { id: "2", date: "05/04", store: "ファミリーマート", amount: 890, category: "FOOD" as Category },
-  { id: "3", date: "05/03", store: "マツモトキヨシ", amount: 2140, category: "DAILY" as Category },
-  { id: "4", date: "05/02", store: "東京ガス", amount: 5400, category: "UTILITY" as Category },
-];
+import { createClient } from "@/lib/supabase/server";
 
 const TOTAL_BUDGET = 240000;
-const TOTAL_SPENT = MONTH_TOTALS.reduce((s, r) => s + r.spent, 0);
-const PERCENT = Math.round((TOTAL_SPENT / TOTAL_BUDGET) * 100);
 
-export default function DashboardPage() {
+type Props = {
+  searchParams: Promise<{ year?: string; month?: string }>;
+};
+
+export default async function DashboardPage({ searchParams }: Props) {
+  const params = await searchParams;
+  const now = new Date();
+  const year = Number(params.year ?? now.getFullYear());
+  const month = Number(params.month ?? now.getMonth() + 1);
+
+  const prevDate = new Date(year, month - 2, 1);
+  const nextDate = new Date(year, month, 1);
+  const prevLink = `/dashboard?year=${prevDate.getFullYear()}&month=${prevDate.getMonth() + 1}`;
+  const nextLink = `/dashboard?year=${nextDate.getFullYear()}&month=${nextDate.getMonth() + 1}`;
+
+  const pad = (n: number) => String(n).padStart(2, "0");
+  const from = `${year}-${pad(month)}-01`;
+  const to = `${year}-${pad(month)}-${pad(new Date(year, month, 0).getDate())}`;
+
+  const supabase = await createClient();
+
+  const { data: receipts } = await supabase
+    .from("receipts")
+    .select("id, date, store_name, total_amount")
+    .gte("date", from)
+    .lte("date", to)
+    .order("date", { ascending: false })
+    .order("created_at", { ascending: false });
+
+  const receiptIds = (receipts ?? []).map((r) => r.id);
+
+  const { data: items } = receiptIds.length > 0
+    ? await supabase
+        .from("receipt_items")
+        .select("receipt_id, category, amount")
+        .in("receipt_id", receiptIds)
+    : { data: [] as { receipt_id: string; category: string; amount: number }[] };
+
+  // Aggregate category totals
+  const categoryTotals = new Map<Category, number>();
+  for (const item of items ?? []) {
+    const cat = item.category as Category;
+    categoryTotals.set(cat, (categoryTotals.get(cat) ?? 0) + item.amount);
+  }
+
+  const monthTotals = (Object.keys(CATEGORIES) as Category[]).map((category) => ({
+    category,
+    spent: categoryTotals.get(category) ?? 0,
+  }));
+
+  const totalSpent = monthTotals.reduce((s, r) => s + r.spent, 0);
+  const percent = Math.round((totalSpent / TOTAL_BUDGET) * 100);
+
+  // Primary category per receipt (first item encountered)
+  const primaryCategory = new Map<string, Category>();
+  for (const item of items ?? []) {
+    if (!primaryCategory.has(item.receipt_id)) {
+      primaryCategory.set(item.receipt_id, item.category as Category);
+    }
+  }
+
+  const recentReceipts = (receipts ?? []).slice(0, 5).map((r) => {
+    const [, m, d] = r.date.split("-");
+    return {
+      id: r.id,
+      date: `${m}/${d}`,
+      store: r.store_name ?? "不明",
+      amount: r.total_amount,
+      category: primaryCategory.get(r.id) ?? ("OTHER" as Category),
+    };
+  });
+
   return (
     <div>
-      {/* Header */}
       <header className="flex items-center justify-between bg-white px-5 py-4 border-b border-slate-100">
         <div className="flex items-center gap-3">
-          <button className="flex h-8 w-8 items-center justify-center rounded-full hover:bg-slate-100 transition-colors">
+          <Link
+            href={prevLink}
+            className="flex h-8 w-8 items-center justify-center rounded-full hover:bg-slate-100 transition-colors"
+          >
             <ChevronLeft className="h-5 w-5 text-slate-500" />
-          </button>
-          <span className="text-base font-semibold text-slate-900">2026年5月</span>
-          <button className="flex h-8 w-8 items-center justify-center rounded-full hover:bg-slate-100 transition-colors">
+          </Link>
+          <span className="text-base font-semibold text-slate-900">{year}年{month}月</span>
+          <Link
+            href={nextLink}
+            className="flex h-8 w-8 items-center justify-center rounded-full hover:bg-slate-100 transition-colors"
+          >
             <ChevronRight className="h-5 w-5 text-slate-500" />
-          </button>
+          </Link>
         </div>
         <button className="relative flex h-9 w-9 items-center justify-center rounded-full hover:bg-slate-100 transition-colors">
           <Bell className="h-5 w-5 text-slate-600" />
@@ -47,22 +106,18 @@ export default function DashboardPage() {
         <div className="rounded-2xl bg-white p-5 shadow-sm">
           <p className="text-xs font-medium text-slate-500 uppercase tracking-wide">今月の支出</p>
           <div className="mt-2 flex items-end gap-2">
-            <span className="text-3xl font-bold text-slate-900">
-              {formatAmount(TOTAL_SPENT)}
-            </span>
+            <span className="text-3xl font-bold text-slate-900">{formatAmount(totalSpent)}</span>
             <span className="mb-0.5 text-sm text-slate-400">/ {formatAmount(TOTAL_BUDGET)}</span>
           </div>
-
-          {/* Progress bar */}
           <div className="mt-4 h-2.5 w-full overflow-hidden rounded-full bg-slate-100">
             <div
               className="h-full rounded-full bg-green-500 transition-all"
-              style={{ width: `${Math.min(PERCENT, 100)}%` }}
+              style={{ width: `${Math.min(percent, 100)}%` }}
             />
           </div>
           <div className="mt-2 flex justify-between text-xs">
-            <span className="font-medium text-green-600">{PERCENT}% 使用</span>
-            <span className="text-slate-400">残り {formatAmount(TOTAL_BUDGET - TOTAL_SPENT)}</span>
+            <span className="font-medium text-green-600">{percent}% 使用</span>
+            <span className="text-slate-400">残り {formatAmount(TOTAL_BUDGET - totalSpent)}</span>
           </div>
         </div>
 
@@ -70,7 +125,7 @@ export default function DashboardPage() {
         <section>
           <h2 className="mb-3 text-sm font-semibold text-slate-700">カテゴリ別</h2>
           <div className="grid grid-cols-2 gap-3">
-            {MONTH_TOTALS.map(({ category, spent }) => {
+            {monthTotals.map(({ category, spent }) => {
               const cat = CATEGORIES[category];
               const pct = cat.budget ? Math.round((spent / cat.budget) * 100) : null;
               const isOver = pct !== null && pct > 100;
@@ -78,18 +133,12 @@ export default function DashboardPage() {
               return (
                 <div key={category} className="rounded-xl bg-white p-4 shadow-sm">
                   <div className="flex items-center justify-between">
-                    <span
-                      className={`rounded-md px-2 py-0.5 text-xs font-medium ${cat.badgeClass}`}
-                    >
+                    <span className={`rounded-md px-2 py-0.5 text-xs font-medium ${cat.badgeClass}`}>
                       {cat.label}
                     </span>
-                    {isOver && (
-                      <span className="text-[10px] font-semibold text-red-500">超過</span>
-                    )}
+                    {isOver && <span className="text-[10px] font-semibold text-red-500">超過</span>}
                   </div>
-                  <p className="mt-2 text-lg font-bold text-slate-900">
-                    {formatAmount(spent)}
-                  </p>
+                  <p className="mt-2 text-lg font-bold text-slate-900">{formatAmount(spent)}</p>
                   {cat.budget ? (
                     <>
                       <div className="mt-1.5 h-1.5 w-full overflow-hidden rounded-full bg-slate-100">
@@ -115,35 +164,34 @@ export default function DashboardPage() {
         <section>
           <div className="mb-3 flex items-center justify-between">
             <h2 className="text-sm font-semibold text-slate-700">最近の支出</h2>
-            <Link
-              href="/receipts"
-              className="flex items-center gap-0.5 text-xs text-green-600 font-medium"
-            >
+            <Link href="/receipts" className="flex items-center gap-0.5 text-xs text-green-600 font-medium">
               すべて見る
               <ArrowRight className="h-3.5 w-3.5" />
             </Link>
           </div>
-          <div className="overflow-hidden rounded-xl bg-white shadow-sm divide-y divide-slate-100">
-            {RECENT_RECEIPTS.map((r) => {
-              const cat = CATEGORIES[r.category];
-              return (
-                <div key={r.id} className="flex items-center gap-3 px-4 py-3">
-                  <span className="text-xs text-slate-400 tabular-nums w-10 shrink-0">
-                    {r.date}
-                  </span>
-                  <span className="flex-1 truncate text-sm font-medium text-slate-800">
-                    {r.store}
-                  </span>
-                  <span className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${cat.badgeClass}`}>
-                    {cat.label}
-                  </span>
-                  <span className="text-sm font-semibold text-slate-900 tabular-nums">
-                    {formatAmount(r.amount)}
-                  </span>
-                </div>
-              );
-            })}
-          </div>
+          {recentReceipts.length === 0 ? (
+            <div className="rounded-xl bg-white p-6 shadow-sm text-center">
+              <p className="text-sm text-slate-400">この月の支出はありません</p>
+            </div>
+          ) : (
+            <div className="overflow-hidden rounded-xl bg-white shadow-sm divide-y divide-slate-100">
+              {recentReceipts.map((r) => {
+                const cat = CATEGORIES[r.category];
+                return (
+                  <div key={r.id} className="flex items-center gap-3 px-4 py-3">
+                    <span className="text-xs text-slate-400 tabular-nums w-10 shrink-0">{r.date}</span>
+                    <span className="flex-1 truncate text-sm font-medium text-slate-800">{r.store}</span>
+                    <span className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${cat.badgeClass}`}>
+                      {cat.label}
+                    </span>
+                    <span className="text-sm font-semibold text-slate-900 tabular-nums">
+                      {formatAmount(r.amount)}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </section>
       </div>
     </div>

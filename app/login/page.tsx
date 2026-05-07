@@ -1,4 +1,12 @@
-export default function LoginPage() {
+import { signInWithGoogle } from "./actions";
+
+interface Props {
+  searchParams: Promise<{ error?: string }>;
+}
+
+export default async function LoginPage({ searchParams }: Props) {
+  const { error } = await searchParams;
+
   return (
     <div className="min-h-screen bg-gradient-to-b from-green-50 to-white flex flex-col items-center justify-center px-6">
       <div className="w-full max-w-sm space-y-8">
@@ -27,12 +35,29 @@ export default function LoginPage() {
           ))}
         </ul>
 
+        {/* Error message */}
+        {error === "unauthorized" && (
+          <div className="rounded-xl bg-red-50 px-4 py-3 text-sm text-red-600 ring-1 ring-red-200">
+            このアカウントはアクセスが許可されていません。
+          </div>
+        )}
+        {error === "auth_error" && (
+          <div className="rounded-xl bg-red-50 px-4 py-3 text-sm text-red-600 ring-1 ring-red-200">
+            ログインに失敗しました。もう一度お試しください。
+          </div>
+        )}
+
         {/* Login Button */}
         <div className="space-y-4">
-          <button className="flex w-full items-center justify-center gap-3 rounded-xl bg-white px-5 py-3.5 text-sm font-medium text-slate-700 shadow-sm ring-1 ring-slate-200 active:bg-slate-50 transition-colors">
-            <GoogleIcon />
-            Googleでログイン
-          </button>
+          <form action={signInWithGoogle}>
+            <button
+              type="submit"
+              className="flex w-full items-center justify-center gap-3 rounded-xl bg-white px-5 py-3.5 text-sm font-medium text-slate-700 shadow-sm ring-1 ring-slate-200 active:bg-slate-50 transition-colors"
+            >
+              <GoogleIcon />
+              Googleでログイン
+            </button>
+          </form>
           <p className="text-center text-xs text-slate-400">
             招待リンクをお持ちの方は、そちらからアクセスしてください
           </p>
