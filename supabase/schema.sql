@@ -1,4 +1,5 @@
 -- Run this in the Supabase SQL Editor
+-- 1年以上前のデータ自動削除の設定は auto_delete_old_data.sql を参照
 
 create extension if not exists "uuid-ossp";
 
