@@ -24,6 +24,7 @@ async function extractTextFromImage(buffer: Buffer): Promise<string> {
 export async function parseReceiptImage(formData: FormData): Promise<{
   storeName: string;
   date: string;
+  totalAmount: string;
   items: Item[];
 }> {
   const file = formData.get("image") as File;
@@ -58,8 +59,9 @@ export async function parseReceiptImage(formData: FormData): Promise<{
 
 【ルール】
 - 商品名はテキストから読み取った名称を自然な日本語に整えること
-- 金額は各商品の税込単価または小計を使用すること
+- 各商品の金額は税込単価または小計（数字のみ）を使用すること
 - 「小計」「消費税」「合計」「お釣り」などの集計行は items に含めないこと
+- totalAmount にはレシートの「合計」「税込合計」「お支払い金額」の値を入れること。見つからない場合は items の金額合計を返すこと
 - 日付はYYYY-MM-DD形式で返すこと
 
 使用できるカテゴリ（categoryには必ずこの一覧のIDをそのまま返すこと）:
@@ -69,6 +71,7 @@ ${categoryList}
 {
   "storeName": "店舗名（不明なら空文字）",
   "date": "YYYY-MM-DD（不明なら今日の日付）",
+  "totalAmount": "合計金額（数字のみ）",
   "items": [
     { "name": "商品名", "amount": "税込金額（数字のみ）", "category": "カテゴリID" }
   ]
@@ -88,16 +91,22 @@ ${ocrText}`,
     .trim();
   const parsed = JSON.parse(cleaned);
 
+  const parsedItems: Item[] = Array.isArray(parsed.items) && parsed.items.length > 0
+    ? parsed.items.map((it: Item) => ({
+        name: String(it.name ?? ""),
+        amount: String(it.amount ?? ""),
+        category: validCategoryIds.has(it.category) ? it.category : "OTHER",
+      }))
+    : [{ name: "", amount: "", category: "FOOD" }];
+
+  const itemsTotal = parsedItems.reduce((sum, it) => sum + (parseInt(it.amount) || 0), 0);
+  const totalAmount = String(parsed.totalAmount ? parseInt(String(parsed.totalAmount)) || itemsTotal : itemsTotal);
+
   return {
     storeName: parsed.storeName ?? "",
     date: parsed.date ?? new Date().toISOString().slice(0, 10),
-    items: Array.isArray(parsed.items) && parsed.items.length > 0
-      ? parsed.items.map((it: Item) => ({
-          name: String(it.name ?? ""),
-          amount: String(it.amount ?? ""),
-          category: validCategoryIds.has(it.category) ? it.category : "OTHER",
-        }))
-      : [{ name: "", amount: "", category: "FOOD" }],
+    totalAmount,
+    items: parsedItems,
   };
 }
 
@@ -107,13 +116,13 @@ export async function saveReceipt(data: {
   memo: string;
   items: Item[];
   isReimbursement: boolean;
+  totalAmount?: string;
 }) {
   const supabase = await createClient();
 
-  const totalAmount = data.items.reduce(
-    (sum, item) => sum + (parseInt(item.amount) || 0),
-    0
-  );
+  const totalAmount = data.totalAmount
+    ? parseInt(data.totalAmount) || 0
+    : data.items.reduce((sum, item) => sum + (parseInt(item.amount) || 0), 0);
 
   const { data: receipt, error } = await supabase
     .from("receipts")

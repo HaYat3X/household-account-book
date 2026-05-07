@@ -24,6 +24,7 @@ export default function NewReceiptClient({ customCategories }: Props) {
   const [storeName, setStoreName] = useState("");
   const [memo, setMemo] = useState("");
   const [items, setItems] = useState<Item[]>([{ ...DEFAULT_ITEM }]);
+  const [totalAmount, setTotalAmount] = useState("");
   const [isReimbursement, setIsReimbursement] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
@@ -45,7 +46,7 @@ export default function NewReceiptClient({ customCategories }: Props) {
     setError(null);
     startTransition(async () => {
       try {
-        await saveReceipt({ date, storeName, memo, items, isReimbursement });
+        await saveReceipt({ date, storeName, memo, items, isReimbursement, totalAmount });
       } catch (e) {
         setError(e instanceof Error ? e.message : "保存に失敗しました");
       }
@@ -93,6 +94,7 @@ export default function NewReceiptClient({ customCategories }: Props) {
               setDate(result.date);
               setStoreName(result.storeName);
               setItems(result.items);
+              setTotalAmount(result.totalAmount);
               setTab("manual");
             }}
           />
@@ -102,11 +104,13 @@ export default function NewReceiptClient({ customCategories }: Props) {
             storeName={storeName}
             memo={memo}
             items={items}
+            totalAmount={totalAmount}
             isReimbursement={isReimbursement}
             categoryOptions={categoryOptions}
             onDateChange={setDate}
             onStoreNameChange={setStoreName}
             onMemoChange={setMemo}
+            onTotalAmountChange={setTotalAmount}
             onAddItem={addItem}
             onRemoveItem={removeItem}
             onUpdateItem={updateItem}
@@ -121,10 +125,28 @@ export default function NewReceiptClient({ customCategories }: Props) {
   );
 }
 
+async function resizeImage(file: File, maxPx = 1920): Promise<Blob> {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    const url = URL.createObjectURL(file);
+    img.onload = () => {
+      URL.revokeObjectURL(url);
+      const scale = Math.min(1, maxPx / Math.max(img.width, img.height));
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.round(img.width * scale);
+      canvas.height = Math.round(img.height * scale);
+      canvas.getContext("2d")!.drawImage(img, 0, 0, canvas.width, canvas.height);
+      canvas.toBlob((blob) => blob ? resolve(blob) : reject(new Error("resize failed")), "image/jpeg", 0.85);
+    };
+    img.onerror = reject;
+    img.src = url;
+  });
+}
+
 function PhotoTab({
   onOcrComplete,
 }: {
-  onOcrComplete: (result: { storeName: string; date: string; items: Item[] }) => void;
+  onOcrComplete: (result: { storeName: string; date: string; totalAmount: string; items: Item[] }) => void;
 }) {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -135,8 +157,9 @@ function PhotoTab({
     setError(null);
     setIsLoading(true);
     try {
+      const resized = await resizeImage(file);
       const formData = new FormData();
-      formData.append("image", file);
+      formData.append("image", resized, "receipt.jpg");
       const result = await parseReceiptImage(formData);
       onOcrComplete(result);
     } catch {
@@ -226,11 +249,13 @@ function ManualTab({
   storeName,
   memo,
   items,
+  totalAmount,
   isReimbursement,
   categoryOptions,
   onDateChange,
   onStoreNameChange,
   onMemoChange,
+  onTotalAmountChange,
   onAddItem,
   onRemoveItem,
   onUpdateItem,
@@ -243,11 +268,13 @@ function ManualTab({
   storeName: string;
   memo: string;
   items: Item[];
+  totalAmount: string;
   isReimbursement: boolean;
   categoryOptions: { value: string; label: string }[];
   onDateChange: (v: string) => void;
   onStoreNameChange: (v: string) => void;
   onMemoChange: (v: string) => void;
+  onTotalAmountChange: (v: string) => void;
   onAddItem: () => void;
   onRemoveItem: (i: number) => void;
   onUpdateItem: (i: number, field: keyof Item, value: string) => void;
@@ -279,6 +306,19 @@ function ManualTab({
               placeholder="例：イオン、ファミリーマート"
               className="mt-1 block w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm text-slate-800 placeholder:text-slate-400 outline-none focus:border-green-500 focus:ring-2 focus:ring-green-100"
             />
+          </label>
+          <label className="block">
+            <span className="text-xs font-medium text-slate-500">合計金額（税込）</span>
+            <div className="relative mt-1">
+              <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-slate-400">¥</span>
+              <input
+                type="number"
+                value={totalAmount}
+                onChange={(e) => onTotalAmountChange(e.target.value)}
+                placeholder="レシートの合計金額"
+                className="block w-full rounded-lg border border-slate-200 bg-slate-50 pl-7 pr-3 py-2.5 text-sm text-slate-800 placeholder:text-slate-400 outline-none focus:border-green-500 focus:ring-2 focus:ring-green-100"
+              />
+            </div>
           </label>
           <label className="block">
             <span className="text-xs font-medium text-slate-500">メモ（任意）</span>
