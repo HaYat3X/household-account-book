@@ -2,9 +2,7 @@
 
 import { createClient } from "@/lib/supabase/server";
 import { redirect } from "next/navigation";
-import type { Category } from "@/lib/categories";
-
-type Item = { name: string; amount: string; category: Category };
+type Item = { name: string; amount: string; category: string };
 
 export async function saveReceipt(data: {
   date: string;

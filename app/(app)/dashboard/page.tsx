@@ -1,12 +1,18 @@
 import Link from "next/link";
-import { Bell, ChevronLeft, ChevronRight, ChevronRight as ArrowRight } from "lucide-react";
+import { ChevronLeft, ChevronRight, ChevronRight as ArrowRight } from "lucide-react";
 import { CATEGORIES, formatAmount, type Category } from "@/lib/categories";
 import { createClient } from "@/lib/supabase/server";
 
-const TOTAL_BUDGET = 240000;
-
 type Props = {
   searchParams: Promise<{ year?: string; month?: string }>;
+};
+
+type CatInfo = {
+  key: string;
+  label: string;
+  budget: number | null;
+  barColor: string;
+  badgeClass: string;
 };
 
 export default async function DashboardPage({ searchParams }: Props) {
@@ -26,13 +32,56 @@ export default async function DashboardPage({ searchParams }: Props) {
 
   const supabase = await createClient();
 
-  const { data: receipts } = await supabase
-    .from("receipts")
-    .select("id, date, store_name, total_amount")
-    .gte("date", from)
-    .lte("date", to)
-    .order("date", { ascending: false })
-    .order("created_at", { ascending: false });
+  const [
+    { data: receipts },
+    { data: budgetOverrides },
+    { data: customCategories },
+  ] = await Promise.all([
+    supabase
+      .from("receipts")
+      .select("id, date, store_name, total_amount")
+      .gte("date", from)
+      .lte("date", to)
+      .order("date", { ascending: false })
+      .order("created_at", { ascending: false }),
+    supabase.from("budget_overrides").select("category, amount"),
+    supabase
+      .from("custom_categories")
+      .select("id, name, budget, bar_color, badge_class_bg, badge_class_text")
+      .order("created_at"),
+  ]);
+
+  const overrideMap = new Map(
+    (budgetOverrides ?? []).map(({ category, amount }) => [category, amount])
+  );
+
+  // 組み込みカテゴリ + カスタムカテゴリを統合したマップ
+  const catInfoMap = new Map<string, CatInfo>();
+  const BUDGET_CATS: Category[] = ["RENT", "FOOD", "UTILITY", "DAILY", "SAVING"];
+
+  (Object.keys(CATEGORIES) as Category[]).forEach((cat) => {
+    catInfoMap.set(cat, {
+      key: cat,
+      label: CATEGORIES[cat].label,
+      budget: overrideMap.get(cat) ?? CATEGORIES[cat].budget,
+      barColor: CATEGORIES[cat].barColor,
+      badgeClass: CATEGORIES[cat].badgeClass,
+    });
+  });
+  (customCategories ?? []).forEach((cat) => {
+    catInfoMap.set(cat.id, {
+      key: cat.id,
+      label: cat.name,
+      budget: cat.budget,
+      barColor: cat.bar_color,
+      badgeClass: `${cat.badge_class_bg} ${cat.badge_class_text}`,
+    });
+  });
+
+  // 月次予算合計
+  const totalBudget =
+    BUDGET_CATS.reduce((sum, cat) => sum + (overrideMap.get(cat) ?? CATEGORIES[cat].budget ?? 0), 0) +
+    (customCategories ?? []).reduce((sum, cat) => sum + (cat.budget ?? 0), 0);
 
   const receiptIds = (receipts ?? []).map((r) => r.id);
 
@@ -43,37 +92,40 @@ export default async function DashboardPage({ searchParams }: Props) {
         .in("receipt_id", receiptIds)
     : { data: [] as { receipt_id: string; category: string; amount: number }[] };
 
-  // Aggregate category totals
-  const categoryTotals = new Map<Category, number>();
+  // カテゴリ別集計
+  const categoryTotals = new Map<string, number>();
   for (const item of items ?? []) {
-    const cat = item.category as Category;
-    categoryTotals.set(cat, (categoryTotals.get(cat) ?? 0) + item.amount);
+    categoryTotals.set(item.category, (categoryTotals.get(item.category) ?? 0) + item.amount);
   }
 
-  const monthTotals = (Object.keys(CATEGORIES) as Category[]).map((category) => ({
-    category,
-    spent: categoryTotals.get(category) ?? 0,
-  }));
+  const totalSpent = Array.from(categoryTotals.values()).reduce((s, v) => s + v, 0);
+  const percent = totalBudget > 0 ? Math.round((totalSpent / totalBudget) * 100) : 0;
 
-  const totalSpent = monthTotals.reduce((s, r) => s + r.spent, 0);
-  const percent = Math.round((totalSpent / TOTAL_BUDGET) * 100);
+  // グリッド表示: 組み込み全部 + 支出があるカスタムカテゴリ
+  const gridCategories: CatInfo[] = [
+    ...(Object.keys(CATEGORIES) as Category[]).map((cat) => catInfoMap.get(cat)!),
+    ...(customCategories ?? [])
+      .filter((cat) => cat.budget !== null || (categoryTotals.get(cat.id) ?? 0) > 0)
+      .map((cat) => catInfoMap.get(cat.id)!),
+  ];
 
-  // Primary category per receipt (first item encountered)
-  const primaryCategory = new Map<string, Category>();
+  // 最近のレシートの主カテゴリ
+  const primaryCategory = new Map<string, string>();
   for (const item of items ?? []) {
     if (!primaryCategory.has(item.receipt_id)) {
-      primaryCategory.set(item.receipt_id, item.category as Category);
+      primaryCategory.set(item.receipt_id, item.category);
     }
   }
 
   const recentReceipts = (receipts ?? []).slice(0, 5).map((r) => {
     const [, m, d] = r.date.split("-");
+    const cat = primaryCategory.get(r.id) ?? "OTHER";
     return {
       id: r.id,
       date: `${m}/${d}`,
       store: r.store_name ?? "不明",
       amount: r.total_amount,
-      category: primaryCategory.get(r.id) ?? ("OTHER" as Category),
+      catInfo: catInfoMap.get(cat) ?? catInfoMap.get("OTHER")!,
     };
   });
 
@@ -95,10 +147,6 @@ export default async function DashboardPage({ searchParams }: Props) {
             <ChevronRight className="h-5 w-5 text-slate-500" />
           </Link>
         </div>
-        <button className="relative flex h-9 w-9 items-center justify-center rounded-full hover:bg-slate-100 transition-colors">
-          <Bell className="h-5 w-5 text-slate-600" />
-          <span className="absolute top-1.5 right-1.5 h-2 w-2 rounded-full bg-red-500" />
-        </button>
       </header>
 
       <div className="px-4 py-5 space-y-5">
@@ -107,7 +155,7 @@ export default async function DashboardPage({ searchParams }: Props) {
           <p className="text-xs font-medium text-slate-500 uppercase tracking-wide">今月の支出</p>
           <div className="mt-2 flex items-end gap-2">
             <span className="text-3xl font-bold text-slate-900">{formatAmount(totalSpent)}</span>
-            <span className="mb-0.5 text-sm text-slate-400">/ {formatAmount(TOTAL_BUDGET)}</span>
+            <span className="mb-0.5 text-sm text-slate-400">/ {formatAmount(totalBudget)}</span>
           </div>
           <div className="mt-4 h-2.5 w-full overflow-hidden rounded-full bg-slate-100">
             <div
@@ -117,7 +165,7 @@ export default async function DashboardPage({ searchParams }: Props) {
           </div>
           <div className="mt-2 flex justify-between text-xs">
             <span className="font-medium text-green-600">{percent}% 使用</span>
-            <span className="text-slate-400">残り {formatAmount(TOTAL_BUDGET - totalSpent)}</span>
+            <span className="text-slate-400">残り {formatAmount(totalBudget - totalSpent)}</span>
           </div>
         </div>
 
@@ -125,13 +173,13 @@ export default async function DashboardPage({ searchParams }: Props) {
         <section>
           <h2 className="mb-3 text-sm font-semibold text-slate-700">カテゴリ別</h2>
           <div className="grid grid-cols-2 gap-3">
-            {monthTotals.map(({ category, spent }) => {
-              const cat = CATEGORIES[category];
+            {gridCategories.map((cat) => {
+              const spent = categoryTotals.get(cat.key) ?? 0;
               const pct = cat.budget ? Math.round((spent / cat.budget) * 100) : null;
               const isOver = pct !== null && pct > 100;
 
               return (
-                <div key={category} className="rounded-xl bg-white p-4 shadow-sm">
+                <div key={cat.key} className="rounded-xl bg-white p-4 shadow-sm">
                   <div className="flex items-center justify-between">
                     <span className={`rounded-md px-2 py-0.5 text-xs font-medium ${cat.badgeClass}`}>
                       {cat.label}
@@ -175,21 +223,18 @@ export default async function DashboardPage({ searchParams }: Props) {
             </div>
           ) : (
             <div className="overflow-hidden rounded-xl bg-white shadow-sm divide-y divide-slate-100">
-              {recentReceipts.map((r) => {
-                const cat = CATEGORIES[r.category];
-                return (
-                  <div key={r.id} className="flex items-center gap-3 px-4 py-3">
-                    <span className="text-xs text-slate-400 tabular-nums w-10 shrink-0">{r.date}</span>
-                    <span className="flex-1 truncate text-sm font-medium text-slate-800">{r.store}</span>
-                    <span className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${cat.badgeClass}`}>
-                      {cat.label}
-                    </span>
-                    <span className="text-sm font-semibold text-slate-900 tabular-nums">
-                      {formatAmount(r.amount)}
-                    </span>
-                  </div>
-                );
-              })}
+              {recentReceipts.map((r) => (
+                <div key={r.id} className="flex items-center gap-3 px-4 py-3">
+                  <span className="text-xs text-slate-400 tabular-nums w-10 shrink-0">{r.date}</span>
+                  <span className="flex-1 truncate text-sm font-medium text-slate-800">{r.store}</span>
+                  <span className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${r.catInfo.badgeClass}`}>
+                    {r.catInfo.label}
+                  </span>
+                  <span className="text-sm font-semibold text-slate-900 tabular-nums">
+                    {formatAmount(r.amount)}
+                  </span>
+                </div>
+              ))}
             </div>
           )}
         </section>

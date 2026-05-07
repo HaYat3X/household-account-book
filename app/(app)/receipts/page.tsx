@@ -28,10 +28,26 @@ function groupByMonth(receipts: ReceiptRow[]) {
 export default async function ReceiptsPage() {
   const supabase = await createClient();
 
-  const { data: receipts } = await supabase
-    .from("receipts")
-    .select("id, date, store_name, total_amount, receipt_items(category)")
-    .order("date", { ascending: false });
+  const [{ data: receipts }, { data: customCategories }] = await Promise.all([
+    supabase
+      .from("receipts")
+      .select("id, date, store_name, total_amount, receipt_items(category)")
+      .order("date", { ascending: false }),
+    supabase
+      .from("custom_categories")
+      .select("id, name, badge_class_bg, badge_class_text"),
+  ]);
+
+  const catMap = new Map<string, { label: string; badgeClass: string }>(
+    [
+      ...(Object.entries(CATEGORIES) as [Category, (typeof CATEGORIES)[Category]][]).map(
+        ([key, val]) => [key, { label: val.label, badgeClass: val.badgeClass }] as const
+      ),
+      ...(customCategories ?? []).map(
+        (c) => [c.id, { label: c.name, badgeClass: `${c.badge_class_bg} ${c.badge_class_text}` }] as const
+      ),
+    ]
+  );
 
   const groups = groupByMonth((receipts ?? []) as ReceiptRow[]);
 
@@ -76,9 +92,7 @@ export default async function ReceiptsPage() {
             <div className="overflow-hidden rounded-xl bg-white shadow-sm divide-y divide-slate-100">
               {month.items.map((receipt) => {
                 const mmdd = receipt.date.slice(5).replace("-", "/");
-                const categories = [
-                  ...new Set(receipt.receipt_items.map((i) => i.category as Category)),
-                ];
+                const categories = [...new Set(receipt.receipt_items.map((i) => i.category))];
                 return (
                   <Link
                     key={receipt.id}
@@ -94,7 +108,8 @@ export default async function ReceiptsPage() {
                       </p>
                       <div className="mt-0.5 flex flex-wrap gap-1">
                         {categories.map((c) => {
-                          const cat = CATEGORIES[c];
+                          const cat = catMap.get(c);
+                          if (!cat) return null;
                           return (
                             <span
                               key={c}
